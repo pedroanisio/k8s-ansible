@@ -1,4 +1,5 @@
-- name: Setup Kubernetes Main Node
+---
+- name: Setup K8S main node
   hosts: k8s-node-1
   become: true
   vars:

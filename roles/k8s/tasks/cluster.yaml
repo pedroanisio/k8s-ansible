@@ -15,7 +15,7 @@
 
 - name: Ensure the keyring directory exists
   ansible.builtin.file:
-    path: /etc/apt/trusted.gpg.d
+    path: /etc/apt/keyring
     state: directory
     mode: '0755'      
 
@@ -27,7 +27,7 @@
 
 - name: Add Kubernetes repository
   ansible.builtin.apt_repository:
-    repo: deb [signed-by={{ k8s_apt_key_path }}] https://pkgs.k8s.io/core:/stable:/v1.29/deb /
+    repo: deb [signed-by={{ k8s_apt_key_path }}] {{k8s_apt_repo}} /
     filename: kubernetes
     state: present        
 

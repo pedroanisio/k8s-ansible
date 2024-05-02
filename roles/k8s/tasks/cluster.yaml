@@ -1,147 +1,132 @@
 # github/devops/roles/kubernetes/tasks/main.yaml
 ---
-- name: Setup kubernetes
-  hosts: 
-    - k8s-node-3
-    - k8s-node-2
-    - k8s-node-1
-  become: yes
-  gather_facts: yes
-  vars:
-    k8s_gpg_key_url: https://pkgs.k8s.io/core:/stable:/v1.29/deb/Release.key
-    k8s_apt_key_path: /etc/apt/trusted.gpg.d/kubernetes-apt-keyring.asc
+- name: Install required packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
 
-  tasks:
-    - name: Install required packages
-      ansible.builtin.apt:
-        name:
-          - ca-certificates
-          - curl
-          - gnupg
-          - lsb-release
-        state: present
+- name: Turn off swap
+  command: swapoff -a
+  ignore_errors: true  # Optional: You might want to ignore errors if swap is already off
 
-    - name: Turn off swap
-      command: swapoff -a
-      ignore_errors: true  # Optional: You might want to ignore errors if swap is already off
+- name: Ensure the keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/trusted.gpg.d
+    state: directory
+    mode: '0755'      
 
-    - name: Ensure the keyring directory exists
-      ansible.builtin.file:
-        path: /etc/apt/trusted.gpg.d
-        state: directory
-        mode: '0755'      
+- name: Download and save the Kubernetes GPG key
+  ansible.builtin.get_url:
+    url: "{{ k8s_gpg_key_url }}"
+    dest: "{{ k8s_apt_key_path }}"
+    mode: '0644'           
 
-    - name: Download and save the Kubernetes GPG key
-      ansible.builtin.get_url:
-        url: "{{ k8s_gpg_key_url }}"
-        dest: "{{ k8s_apt_key_path }}"
-        mode: '0644'           
+- name: Add Kubernetes repository
+  ansible.builtin.apt_repository:
+    repo: deb [signed-by={{ k8s_apt_key_path }}] https://pkgs.k8s.io/core:/stable:/v1.29/deb /
+    filename: kubernetes
+    state: present        
 
-    - name: Add Kubernetes repository
-      ansible.builtin.apt_repository:
-        repo: deb [signed-by={{ k8s_apt_key_path }}] https://pkgs.k8s.io/core:/stable:/v1.29/deb /
-        filename: kubernetes
-        state: present        
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: yes      
 
-    - name: Update apt cache
-      ansible.builtin.apt:
-        update_cache: yes      
+- name: Install Kubernetes packages
+  ansible.builtin.apt:
+    name:
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
 
-    - name: Install Kubernetes packages
-      ansible.builtin.apt:
-        name:
-          - kubelet
-          - kubeadm
-          - kubectl
-        state: present
+- name: Hold Kubernetes packages
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
 
-    - name: Hold Kubernetes packages
-      ansible.builtin.dpkg_selections:
-        name: "{{ item }}"
-        selection: hold
-      loop:
-        - kubelet
-        - kubeadm
-        - kubectl
+- name: Create the containerd configuration directory
+  ansible.builtin.file:
+    path: /etc/containerd
+    state: directory
+    mode: '0755'
 
-    - name: Create the containerd configuration directory
-      ansible.builtin.file:
-        path: /etc/containerd
-        state: directory
-        mode: '0755'
+- name: Generate containerd configuration file
+  ansible.builtin.shell:
+    cmd: containerd config default
+    executable: /bin/bash
+  register: containerd_config
+  changed_when: false  # Ensures this task does not report a change every time
 
-    - name: Generate containerd configuration file
-      ansible.builtin.shell:
-        cmd: containerd config default
-        executable: /bin/bash
-      register: containerd_config
-      changed_when: false  # Ensures this task does not report a change every time
+- name: Generate containerd default configuration
+  ansible.builtin.command:
+    cmd: containerd config default
+  register: containerd_config
+  changed_when: false  # Avoid reporting changes here
 
-    - name: Generate containerd default configuration
-      ansible.builtin.command:
-        cmd: containerd config default
-      register: containerd_config
-      changed_when: false  # Avoid reporting changes here
+- name: Write containerd configuration to file
+  ansible.builtin.copy:
+    dest: /etc/containerd/config.toml
+    content: "{{ containerd_config.stdout }}"
+    mode: '0644'
 
-    - name: Write containerd configuration to file
-      ansible.builtin.copy:
-        dest: /etc/containerd/config.toml
-        content: "{{ containerd_config.stdout }}"
-        mode: '0644'
+- name: Set SystemdCgroup to true in the containerd configuration
+  ansible.builtin.lineinfile:
+    path: /etc/containerd/config.toml
+    regexp: '^\s*SystemdCgroup\s*=\s*false'
+    line: 'SystemdCgroup = true'
+    backrefs: yes
+  register: line_change
 
-    - name: Set SystemdCgroup to true in the containerd configuration
-      ansible.builtin.lineinfile:
-        path: /etc/containerd/config.toml
-        regexp: '^\s*SystemdCgroup\s*=\s*false'
-        line: 'SystemdCgroup = true'
-        backrefs: yes
-      register: line_change
+- name: Restart containerd service
+  ansible.builtin.systemd:
+    name: containerd
+    state: restarted
+  when: line_change.changed
 
-    - name: Restart containerd service
-      ansible.builtin.systemd:
-        name: containerd
-        state: restarted
-      when: line_change.changed
+- name: Enable containerd service
+  ansible.builtin.systemd:
+    name: containerd
+    enabled: yes
+    state: started
 
-    - name: Enable containerd service
-      ansible.builtin.systemd:
-        name: containerd
-        enabled: yes
-        state: started
+- name: Add kernel modules to load on boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+    mode: '0644'
+    owner: root
+    group: root
 
-    - name: Add kernel modules to load on boot
-      ansible.builtin.copy:
-        dest: /etc/modules-load.d/k8s.conf
-        content: |
-          overlay
-          br_netfilter
-        mode: '0644'
-        owner: root
-        group: root
+- name: Set sysctl parameters for Kubernetes
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/kubernetes.conf
+    content: |
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.bridge.bridge-nf-call-iptables = 1
+      net.ipv4.ip_forward = 1
+    mode: '0644'
+    owner: root
+    group: root
+  notify: reload sysctl
 
-    - name: Set sysctl parameters for Kubernetes
-      ansible.builtin.copy:
-        dest: /etc/sysctl.d/kubernetes.conf
-        content: |
-          net.bridge.bridge-nf-call-ip6tables = 1
-          net.bridge.bridge-nf-call-iptables = 1
-          net.ipv4.ip_forward = 1
-        mode: '0644'
-        owner: root
-        group: root
-      notify: reload sysctl
+- name: Load overlay kernel module
+  ansible.builtin.modprobe:
+    name: overlay
+    state: present
 
-    - name: Load overlay kernel module
-      ansible.builtin.modprobe:
-        name: overlay
-        state: present
+- name: Load br_netfilter kernel module
+  ansible.builtin.modprobe:
+    name: br_netfilter
+    state: present
 
-    - name: Load br_netfilter kernel module
-      ansible.builtin.modprobe:
-        name: br_netfilter
-        state: present
-
-  handlers:
-    - name: reload sysctl
-      ansible.builtin.command:
-        cmd: sysctl --system
+handlers:

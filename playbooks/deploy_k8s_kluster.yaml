@@ -1,5 +1,5 @@
 ---
-- name: Deploy K8S to cluster
+- name: Deploy kubernetes to cluster
   hosts: pve_cluster_1
   become: yes
   gather_facts: yes

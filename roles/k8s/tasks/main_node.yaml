@@ -1,81 +1,68 @@
 ---
-- name: Setup Kubernetes Main Node
-  hosts: k8s-node-1
-  become: true
-  vars:
-    kubeadm_config_path: /etc/kubernetes/config/kubeadm-config.yaml
-    kubeadm_genereted_config: /etc/kubernetes/admin.conf
-    kubernetes_version: "1.29.0"
-    pod_subnet: "10.244.0.0/16"
-  vars_files:
-    - /etc/ansible/secret.yml        
+- name: Get home directory for the user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ vault_username }}"
+  register: getent_passwd
 
-  tasks:
+- name: Set fact for user's home directory
+  ansible.builtin.set_fact:
+    kube_config_path: "{{ getent_passwd.ansible_facts.getent_passwd[vault_username][4] }}/.kube"
 
-    - name: Get home directory for the user
-      ansible.builtin.getent:
-        database: passwd
-        key: "{{ vault_username }}"
-      register: getent_passwd
+- name: Ensure containerd service is running and enabled
+  ansible.builtin.systemd:
+    name: containerd
+    state: started
+    enabled: yes
 
-    - name: Set fact for user's home directory
-      ansible.builtin.set_fact:
-        kube_config_path: "{{ getent_passwd.ansible_facts.getent_passwd[vault_username][4] }}/.kube"
+- name: Create kubeadm configuration directory
+  ansible.builtin.file:
+    path: /etc/kubernetes/config
+    state: directory
+    mode: '0755'
 
-    - name: Ensure containerd service is running and enabled
-      ansible.builtin.systemd:
-        name: containerd
-        state: started
-        enabled: yes
+- name: Check if Kubernetes is already initialized
+  ansible.builtin.stat:
+    path: "{{kubeadm_config_path}}"
+  register: kube_init_check        
 
-    - name: Create kubeadm configuration directory
-      ansible.builtin.file:
-        path: /etc/kubernetes/config
-        state: directory
-        mode: '0755'
+- name: Create kubeadm configuration file
+  ansible.builtin.copy:
+    dest: "{{ kubeadm_config_path }}"
+    content: |
+      kind: ClusterConfiguration
+      apiVersion: kubeadm.k8s.io/v1beta3
+      kubernetesVersion: "{{ kubernetes_version }}"
+      networking:
+        podSubnet: "{{ pod_subnet }}"  # specify the pod CIDR here
+      ---
+      kind: KubeletConfiguration
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      cgroupDriver: systemd
+    mode: '0644'
+  when: not kube_init_check.stat.exists
 
-    - name: Check if Kubernetes is already initialized
-      ansible.builtin.stat:
-        path: "{{kubeadm_config_path}}"
-      register: kube_init_check        
+- name: Initialize the Kubernetes cluster
+  ansible.builtin.command:
+    cmd: kubeadm init --config {{ kubeadm_config_path }}
+  register: init_result
+  when: not kube_init_check.stat.exists
 
-    - name: Create kubeadm configuration file
-      ansible.builtin.copy:
-        dest: "{{ kubeadm_config_path }}"
-        content: |
-          kind: ClusterConfiguration
-          apiVersion: kubeadm.k8s.io/v1beta3
-          kubernetesVersion: "{{ kubernetes_version }}"
-          networking:
-            podSubnet: "{{ pod_subnet }}"  # specify the pod CIDR here
-          ---
-          kind: KubeletConfiguration
-          apiVersion: kubelet.config.k8s.io/v1beta1
-          cgroupDriver: systemd
-        mode: '0644'
-      when: not kube_init_check.stat.exists
+- name: Ensure .kube directory exists in user's home
+  ansible.builtin.file:
+    path: "{{ kube_config_path }}"
+    state: directory
+    mode: '0755'
+  become_user: "{{ vault_username }}"
 
-    - name: Initialize the Kubernetes cluster
-      ansible.builtin.command:
-        cmd: kubeadm init --config {{ kubeadm_config_path }}
-      register: init_result
-      when: not kube_init_check.stat.exists
-
-    - name: Ensure .kube directory exists in user's home
-      ansible.builtin.file:
-        path: "{{ kube_config_path }}"
-        state: directory
-        mode: '0755'
-      become_user: "{{ vault_username }}"
-
-    - name: Copy admin kubeconfig to user's home directory
-      ansible.builtin.copy:
-        src: "/etc/kubernetes/admin.conf"
-        dest: "{{ kube_config_path }}/config"
-        remote_src: yes
-        owner: "{{ vault_username }}"
-        group: "{{ vault_username }}"
-      
-    - name: Display kubeadm init output
-      ansible.builtin.debug:
-        msg: "{{ init_result.stdout }}"
+- name: Copy admin kubeconfig to user's home directory
+  ansible.builtin.copy:
+    src: "/etc/kubernetes/admin.conf"
+    dest: "{{ kube_config_path }}/config"
+    remote_src: yes
+    owner: "{{ vault_username }}"
+    group: "{{ vault_username }}"
+  
+- name: Display kubeadm init output
+  ansible.builtin.debug:
+    msg: "{{ init_result.stdout }}"

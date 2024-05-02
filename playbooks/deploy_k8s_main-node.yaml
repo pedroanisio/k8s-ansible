@@ -1,0 +1,11 @@
+- name: Setup Kubernetes Main Node
+  hosts: k8s-node-1
+  become: true
+  vars:
+    kubeadm_config_path: /etc/kubernetes/config/kubeadm-config.yaml
+    kubeadm_genereted_config: /etc/kubernetes/admin.conf
+    kubernetes_version: "1.29.0"
+    pod_subnet: "10.244.0.0/16"
+  vars_files:
+    - /etc/ansible/secret.yml
+  roles: k8s

@@ -3,3 +3,8 @@
   import_tasks: cluster.yaml
   tags: 
     - cluster
+
+- name: Install main-node
+  import_tasks: main_node.yaml
+  tags: 
+    - main_node    

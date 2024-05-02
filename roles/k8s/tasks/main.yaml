@@ -1,0 +1,5 @@
+# Update the apt cache
+- name: Install cluster
+  import_tasks: cluster.yaml
+  tags: 
+    - cluster

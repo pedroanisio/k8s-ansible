@@ -1,0 +1,6 @@
+---
+- name: Deploy K8S to cluster
+  hosts: pve_cluster_1
+  become: yes
+  roles:
+    - k8s

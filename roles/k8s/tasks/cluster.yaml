@@ -128,5 +128,3 @@
   ansible.builtin.modprobe:
     name: br_netfilter
     state: present
-
-handlers:

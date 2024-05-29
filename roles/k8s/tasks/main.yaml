@@ -1,8 +1,14 @@
 # Update the apt cache
+
+- name: Install docker
+  import_tasks: containerd.yaml
+  tags: 
+    - install_cluster
+
 - name: Install cluster
   import_tasks: cluster.yaml
   tags: 
-    - cluster
+    - install_cluster
 
 - name: Install main-node
   import_tasks: main_node.yaml

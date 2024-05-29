@@ -13,36 +13,37 @@
   command: swapoff -a
   ignore_errors: true  # Optional: You might want to ignore errors if swap is already off
 
-- name: Ensure the keyring directory exists
-  ansible.builtin.file:
-    path: /etc/apt/keyring
-    state: directory
-    mode: '0755'               
+- name: Check if the Kubernetes GPG key is already imported
+  ansible.builtin.stat:
+    path: "{{ k8s_apt_key_path }}"
+  register: k8s_key
 
-- name: Fetch Kubernetes Release Key with curl
-  ansible.builtin.command:
-    cmd: curl -fsSL {{ k8s_gpg_key_url }}
-    chdir: /tmp/
-  register: curl_result
-  changed_when: curl_result.rc == 0
+- block:
+    - name: Fetch Kubernetes Release Key with curl
+      ansible.builtin.command:
+        cmd: curl -fsSL {{ k8s_gpg_key_url }}
+        chdir: /tmp/
+      register: curl_result
+      changed_when: curl_result.rc == 0
 
-- name: Write the key to a file
-  ansible.builtin.copy:
-    content: "{{ curl_result.stdout }}"
-    dest: /tmp/Release.key
-    mode: '0644'         
+    - name: Write the key to a file
+      ansible.builtin.copy:
+        content: "{{ curl_result.stdout }}"
+        dest: /tmp/Release.key
+        mode: '0644'
 
-- name: Import the Release Key with gpg and copy to the correct directory
-  ansible.builtin.shell: |
-    gpg --dearmor -o {{ k8s_apt_key_path }} < /tmp/Release.key
-
-
+    - name: Import the Release Key with gpg and copy to the correct directory
+      ansible.builtin.shell: |
+        gpg --dearmor -o {{ k8s_apt_key_path }} < /tmp/Release.key
+      args:
+        creates: "{{ k8s_apt_key_path }}"
+  when: not k8s_key.stat.exists
 
 - name: Add Kubernetes repository
   ansible.builtin.apt_repository:
     repo: deb [signed-by={{ k8s_apt_key_path }}] {{k8s_apt_repo}} /
     filename: kubernetes
-    state: present        
+    state: present
 
 - name: Update apt cache
   ansible.builtin.apt:
